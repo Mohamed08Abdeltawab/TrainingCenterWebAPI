@@ -42,7 +42,7 @@ namespace TrainingCenterWebAPI.Controllers
         }
 
         [HttpPost]
-        public async Task<IActionResult> AddNewCourse([FromBody] CourseCreateDto courseCreateDto)
+        public async Task<IActionResult> CreateCourse([FromBody] CourseCreateDto courseCreateDto)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
