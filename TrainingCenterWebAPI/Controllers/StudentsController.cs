@@ -61,28 +61,29 @@ namespace TrainingCenter.Controllers
             return CreatedAtAction(nameof(GetStudentById), new { id = studentReadDto.StudentId }, studentReadDto);
         }
 
-        [HttpPut("{id:int}/profile")]
-        public async Task<IActionResult> UpdateProfile(int id, [FromBody] StudentProfileCreateDto profileCreateDto)
+        // 6️⃣ تحديث بيانات الطالب نفسه (PUT: api/Students/{id})
+        [HttpPut("{id:int}")]
+        public async Task<IActionResult> UpdateStudent(int id, [FromBody] StudentCreateDto studentUpdateDto)
         {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            // 1. البحث عن الطالب في الداتا بيز
             var student = await _unitOfWork.Students.GetByIdAsync(id);
 
             if (student == null)
-                return NotFound($"Student with ID {id} was not found.");
+                return NotFound($"Student with ID: {id} was not found.");
 
-            var profile = (await _unitOfWork.StudentProfiles
-                .FindAsync(p => p.StudentId == id))
-                .FirstOrDefault();
+            // 2. عمل Mapping للبيانات الجديدة فوق الكائن الموجود
+            _mapper.Map(studentUpdateDto, student);
 
-            if (profile == null)
-                return NotFound("Student profile was not found.");
-
-            _mapper.Map(profileCreateDto, profile);
-
-            _unitOfWork.StudentProfiles.Update(profile);
+            // 3. تحديث البيانات والحفظ
+            _unitOfWork.Students.Update(student);
             await _unitOfWork.CompleteAsync();
 
-            return Ok("Profile updated successfully.");
+            return Ok("Student data updated successfully.");
         }
+
 
         [HttpDelete("{id:int}")]
         public async Task<IActionResult> DeleteStudent(int id)
@@ -96,6 +97,76 @@ namespace TrainingCenter.Controllers
             await _unitOfWork.CompleteAsync();
 
             return Ok("Student deleted successfully.");
+        }
+
+
+        // 1️⃣ جلب بروفايل طالب معين (GET: api/Students/{id}/profile)
+        [HttpGet("{id:int}/profile")]
+        public async Task<IActionResult> GetStudentProfile(int id)
+        {
+            var student = await _unitOfWork.Students.GetByIdAsync(id);
+            if (student == null)
+                return NotFound($"Student with ID: {id} was not found.");
+
+            var profile = (await _unitOfWork.StudentProfiles
+                .FindAsync(p => p.StudentId == id))
+                .FirstOrDefault();
+
+            if (profile == null)
+                return NotFound($"Profile for Student ID: {id} was not found.");
+
+            var profileReadDto = _mapper.Map<StudentProfileReadDto>(profile);
+            return Ok(profileReadDto);
+        }
+
+        // 2️⃣ إضافة أو تحديث بروفايل الطالب (PUT: api/Students/{id}/profile)
+        [HttpPut("{id:int}/profile")]
+        public async Task<IActionResult> AddOrUpdateStudentProfile(int id, [FromBody] StudentProfileCreateDto profileDto)
+        {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var student = await _unitOfWork.Students.GetByIdAsync(id);
+            if (student == null)
+                return NotFound($"Student with ID: {id} was not found.");
+
+            var existingProfile = (await _unitOfWork.StudentProfiles
+                .FindAsync(p => p.StudentId == id))
+                .FirstOrDefault();
+
+            if (existingProfile == null)
+            {
+                // إنشاء جديد
+                var newProfile = _mapper.Map<StudentProfile>(profileDto);
+                newProfile.StudentId = id;
+                await _unitOfWork.StudentProfiles.AddAsync(newProfile);
+            }
+            else
+            {
+                // تحديث الموجود
+                _mapper.Map(profileDto, existingProfile);
+                _unitOfWork.StudentProfiles.Update(existingProfile);
+            }
+
+            await _unitOfWork.CompleteAsync();
+            return Ok("Student profile saved successfully.");
+        }
+
+        // 3️⃣ حذف بروفايل الطالب (DELETE: api/Students/{id}/profile)
+        [HttpDelete("{id:int}/profile")]
+        public async Task<IActionResult> DeleteStudentProfile(int id)
+        {
+            var profile = (await _unitOfWork.StudentProfiles
+                .FindAsync(p => p.StudentId == id))
+                .FirstOrDefault();
+
+            if (profile == null)
+                return NotFound($"Profile for Student ID: {id} was not found.");
+
+            _unitOfWork.StudentProfiles.Delete(profile);
+            await _unitOfWork.CompleteAsync();
+
+            return Ok("Student profile deleted successfully.");
         }
     }
 }
