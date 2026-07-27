@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using TrainingCenter.DTOs.Enrollment;
@@ -9,6 +10,7 @@ namespace TrainingCenterWebAPI.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class EnrollmentsController : ControllerBase
     {
         private readonly IUnitOfWork _unitOfWork;
@@ -22,6 +24,7 @@ namespace TrainingCenterWebAPI.Controllers
 
         // 1️⃣ إرجاع كل تسجيلات الكورسات (GET: api/Enrollments)
         [HttpGet]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> GetAllEnrollments()
         {
             var enrollments = await _unitOfWork.Enrollments.GetAllAsync();
@@ -32,6 +35,7 @@ namespace TrainingCenterWebAPI.Controllers
 
         // 2️⃣ إرجاع عملية تسجيل معينة برقم الـ ID (GET: api/Enrollments/{id})
         [HttpGet("{id:int}")]
+        [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetEnrollmentById(int id)
         {
             var enrollment = await _unitOfWork.Enrollments.GetByIdAsync(id);
@@ -45,6 +49,7 @@ namespace TrainingCenterWebAPI.Controllers
 
         // 3️⃣ تسجيل طالب في كورس جديد (POST: api/Enrollments)
         [HttpPost]
+        [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> CreateEnrollment([FromBody] EnrollmentCreateDto enrollmentCreateDto)
         {
             if (!ModelState.IsValid)
@@ -75,6 +80,7 @@ namespace TrainingCenterWebAPI.Controllers
 
         // 4️⃣ تحديث بيانات التسجيل (PUT: api/Enrollments/{id})
         [HttpPut("{id:int}")]
+        [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> UpdateEnrollment(int id, [FromBody] EnrollmentCreateDto enrollmentUpdateDto)
         {
             var enrollment = await _unitOfWork.Enrollments.GetByIdAsync(id);
@@ -92,6 +98,7 @@ namespace TrainingCenterWebAPI.Controllers
 
         // 5️⃣ إلغاء/حذف تسجيل طالب من كورس (DELETE: api/Enrollments/{id})
         [HttpDelete("{id:int}")]
+        [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> DeleteEnrollment(int id)
         {
             var enrollment = await _unitOfWork.Enrollments.GetByIdAsync(id);

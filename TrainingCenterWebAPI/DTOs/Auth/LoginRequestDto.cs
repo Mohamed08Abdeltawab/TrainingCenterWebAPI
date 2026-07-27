@@ -2,7 +2,7 @@
 
 namespace TrainingCenter.DTOs.Auth
 {
-    public class LoginDto
+    public class LoginRequestDto
     {
         [Required]
         public string UsernameOrEmail { get; set; } = string.Empty;

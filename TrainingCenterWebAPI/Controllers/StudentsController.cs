@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using TrainingCenter.DTOs.Student;
 using TrainingCenter.DTOs.StudentProfile;
@@ -7,8 +8,9 @@ using TrainingCenter.Interfaces;
 
 namespace TrainingCenter.Controllers
 {
-    [ApiController]
     [Route("api/[controller]")]
+    [ApiController]
+    [Authorize]
     public class StudentsController : ControllerBase
     {
         private readonly IUnitOfWork _unitOfWork;
@@ -21,6 +23,7 @@ namespace TrainingCenter.Controllers
         }
 
         [HttpGet]
+        [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> GetAllStudents()
         {
             var students = await _unitOfWork.Students.GetAllAsync();
@@ -31,6 +34,7 @@ namespace TrainingCenter.Controllers
         }
 
         [HttpGet("{id:int}")]
+        [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetStudentById(int id)
         {
             var student = await _unitOfWork.Students.GetByIdAsync(id);
@@ -43,6 +47,7 @@ namespace TrainingCenter.Controllers
         }
 
         [HttpPost]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> CreateStudent([FromBody] StudentCreateDto studentCreateDto)
         {
             if (!ModelState.IsValid)
@@ -63,6 +68,7 @@ namespace TrainingCenter.Controllers
 
         // 6️⃣ تحديث بيانات الطالب نفسه (PUT: api/Students/{id})
         [HttpPut("{id:int}")]
+        [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> UpdateStudent(int id, [FromBody] StudentCreateDto studentUpdateDto)
         {
             if (!ModelState.IsValid)
@@ -86,6 +92,7 @@ namespace TrainingCenter.Controllers
 
 
         [HttpDelete("{id:int}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteStudent(int id)
         {
             var student = await _unitOfWork.Students.GetByIdAsync(id);
@@ -102,6 +109,7 @@ namespace TrainingCenter.Controllers
 
         // 1️⃣ جلب بروفايل طالب معين (GET: api/Students/{id}/profile)
         [HttpGet("{id:int}/profile")]
+        [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> GetStudentProfile(int id)
         {
             var student = await _unitOfWork.Students.GetByIdAsync(id);
@@ -121,6 +129,7 @@ namespace TrainingCenter.Controllers
 
         // 2️⃣ إضافة أو تحديث بروفايل الطالب (PUT: api/Students/{id}/profile)
         [HttpPut("{id:int}/profile")]
+        [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> AddOrUpdateStudentProfile(int id, [FromBody] StudentProfileCreateDto profileDto)
         {
             if (!ModelState.IsValid)
@@ -154,6 +163,7 @@ namespace TrainingCenter.Controllers
 
         // 3️⃣ حذف بروفايل الطالب (DELETE: api/Students/{id}/profile)
         [HttpDelete("{id:int}/profile")]
+        [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> DeleteStudentProfile(int id)
         {
             var profile = (await _unitOfWork.StudentProfiles

@@ -1,4 +1,5 @@
 ﻿using AutoMapper;
+using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
 using TrainingCenter.DTOs.Instructor;
@@ -9,6 +10,7 @@ namespace TrainingCenterWebAPI.Controllers
 {
     [Route("api/[controller]")]
     [ApiController]
+    [Authorize]
     public class InstructorsController : ControllerBase
     {
         private readonly IUnitOfWork _unitOfWork;
@@ -21,6 +23,7 @@ namespace TrainingCenterWebAPI.Controllers
         }
 
         [HttpGet]
+        [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetAllInstructors()
         {
             var instructors = await _unitOfWork.Instructors.GetAllAsync();
@@ -30,6 +33,7 @@ namespace TrainingCenterWebAPI.Controllers
         }
 
         [HttpGet("{id:int}")]
+        [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetInstructorById(int id)
         {
             var instructor = await _unitOfWork.Instructors.GetByIdAsync(id);
@@ -42,6 +46,7 @@ namespace TrainingCenterWebAPI.Controllers
         }
 
         [HttpPost]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> CreateInstructor([FromBody] InstructorCreateDto instructorCreateDto)
         {
             if (!ModelState.IsValid)
@@ -57,6 +62,7 @@ namespace TrainingCenterWebAPI.Controllers
         }
 
         [HttpPut("{id:int}")]
+        [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> UpdateInstructor(int id, [FromBody] InstructorCreateDto instructorUpdateDto)
         {
             var instructor = await _unitOfWork.Instructors.GetByIdAsync(id);
@@ -73,6 +79,7 @@ namespace TrainingCenterWebAPI.Controllers
         }
 
         [HttpDelete("{id:int}")]
+        [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteInstructor(int id)
         {
             var instructor = await _unitOfWork.Instructors.GetByIdAsync(id);

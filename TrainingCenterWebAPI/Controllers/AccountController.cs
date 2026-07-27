@@ -1,10 +1,11 @@
 ﻿using Microsoft.AspNetCore.Identity;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using Microsoft.IdentityModel.Tokens;
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
-using System.Text.Unicode;
 using TrainingCenter.DTOs.Auth;
 using TrainingCenter.Entities;
 using TrainingCenter.Interfaces;
@@ -12,67 +13,56 @@ using TrainingCenter.Repositories;
 
 namespace TrainingCenterWebAPI.Controllers
 {
-    [Route("api/[controller]")]
     [ApiController]
+    [Route("api/[controller]")]
     public class AccountController : ControllerBase
     {
         private readonly IUnitOfWork _unitOfWork;
         private readonly IConfiguration _configuration;
         private readonly IPasswordHasher<User> _passwordHasher;
+        private readonly ILogger<AccountController> _logger;
 
         public AccountController(
             IUnitOfWork unitOfWork,
             IConfiguration configuration,
-            IPasswordHasher<User> passwordHasher)
+            IPasswordHasher<User> passwordHasher,
+            ILogger<AccountController> logger)
         {
             _unitOfWork = unitOfWork;
             _configuration = configuration;
             _passwordHasher = passwordHasher;
+            _logger = logger;
         }
 
+        // ==========================================
+        // 1. REGISTER
+        // ==========================================
         [HttpPost("register")]
+        //[EnableRateLimiting("AuthLimiter")]
         public async Task<IActionResult> Register([FromBody] RegisterDto dto)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
-            // 1. Validate Role value
             var allowedRoles = new[] { "Admin", "Instructor", "Student" };
             if (!allowedRoles.Contains(dto.Role))
-                return BadRequest(new AuthResponseDto { IsSuccess = false, Message = "Invalid Role. Allowed values: Admin, Instructor, Student." });
+                return BadRequest("Invalid Role. Allowed values: Admin, Instructor, Student.");
 
-            // 2. Cross-check Role constraints (InstructorId / StudentId)
             if (dto.Role == "Student" && dto.InstructorId.HasValue)
-                return BadRequest(new AuthResponseDto { IsSuccess = false, Message = "Students cannot have an InstructorId." });
+                return BadRequest("Students cannot have an InstructorId.");
 
             if (dto.Role == "Instructor" && dto.StudentId.HasValue)
-                return BadRequest(new AuthResponseDto { IsSuccess = false, Message = "Instructors cannot have a StudentId." });
+                return BadRequest("Instructors cannot have a StudentId.");
 
             if (dto.Role == "Admin" && (dto.StudentId.HasValue || dto.InstructorId.HasValue))
-                return BadRequest(new AuthResponseDto { IsSuccess = false, Message = "Admins cannot have StudentId or InstructorId." });
-
-            // 3. Check for unique Username and Email
-            //var existingUsers = await _unitOfWork.Users.GetAllAsync();
+                return BadRequest("Admins cannot have StudentId or InstructorId.");
 
             if (await _unitOfWork.Users.AnyAsync(u => u.Username == dto.Username))
-            {
-                return BadRequest(new AuthResponseDto
-                {
-                    IsSuccess = false,
-                    Message = "Username is already taken."
-                });
-            }
+                return BadRequest("Username is already taken.");
 
             if (await _unitOfWork.Users.AnyAsync(u => u.Email == dto.Email))
-            {
-                return BadRequest(new AuthResponseDto
-                {
-                    IsSuccess = false,
-                    Message = "Email is already registered."
-                });
-            }
+                return BadRequest("Email is already registered.");
 
-            // 4. Create new user & Hash password
             var newUser = new User
             {
                 Username = dto.Username,
@@ -89,54 +79,152 @@ namespace TrainingCenterWebAPI.Controllers
             await _unitOfWork.Users.AddAsync(newUser);
             await _unitOfWork.CompleteAsync();
 
-            return Ok(new AuthResponseDto
+            return Ok(new { Message = "User registered successfully." });
+        }
+
+        // ==========================================
+        // 2. LOGIN
+        // ==========================================
+        [HttpPost("login")]
+        [EnableRateLimiting("AuthLimiter")]
+        public async Task<IActionResult> Login([FromBody] LoginRequestDto request)
+        {
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            // Step 1: Find user by Email
+            var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.Email == request.UsernameOrEmail);
+
+            if (user == null || !user.IsActive)
             {
-                IsSuccess = true,
-                Message = "User registered successfully.",
-                Username = newUser.Username,
-                Role = newUser.Role
+                _logger.LogWarning("Failed login attempt (email not found or inactive). Email={Email}, IP={IP}", request.UsernameOrEmail, ip);
+                return Unauthorized("Invalid credentials");
+            }
+
+            // Step 2: Verify password
+            var passwordResult = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, request.Password);
+            if (passwordResult == PasswordVerificationResult.Failed)
+            {
+                _logger.LogWarning("Failed login attempt (bad password). Email={Email}, IP={IP}", request.UsernameOrEmail, ip);
+                return Unauthorized("Invalid credentials");
+            }
+
+            // Step 3: Generate Access Token
+            var accessToken = GenerateAccessToken(user);
+
+            // Step 4: Generate Refresh Token & Hash it before saving
+            var rawRefreshToken = GenerateRefreshToken();
+
+            user.RefreshTokenHash = _passwordHasher.HashPassword(user, rawRefreshToken);
+            user.RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(7);
+            user.RefreshTokenRevokedAt = null;
+
+            await _unitOfWork.CompleteAsync();
+
+            _logger.LogInformation("Successful login. UserId={UserId}, Email={Email}, IP={IP}", user.UserId, user.Email, ip);
+
+            return Ok(new TokenResponseDto
+            {
+                AccessToken = accessToken,
+                RefreshToken = rawRefreshToken
             });
         }
 
-        [HttpPost("login")]
-        public async Task<IActionResult> Login([FromBody] LoginDto dto)
+        // ==========================================
+        // 3. REFRESH TOKEN
+        // ==========================================
+        [HttpPost("refresh")]
+        [EnableRateLimiting("AuthLimiter")]
+        public async Task<IActionResult> Refresh([FromBody] RefreshRequestDto request)
+        {
+            var ip = HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
+            var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
+
+            if (user == null)
+            {
+                _logger.LogWarning("Invalid refresh attempt (email not found). Email={Email}, IP={IP}", request.Email, ip);
+                return Unauthorized("Invalid refresh request");
+            }
+
+            if (user.RefreshTokenRevokedAt != null)
+            {
+                _logger.LogWarning("Refresh attempt using revoked token. UserId={UserId}, Email={Email}, IP={IP}", user.UserId, user.Email, ip);
+                return Unauthorized("Refresh token is revoked");
+            }
+
+            if (user.RefreshTokenExpiresAt == null || user.RefreshTokenExpiresAt <= DateTime.UtcNow)
+            {
+                _logger.LogWarning("Refresh attempt using expired token. UserId={UserId}, Email={Email}, IP={IP}", user.UserId, user.Email, ip);
+                return Unauthorized("Refresh token expired");
+            }
+
+            // Verify Refresh Token Hash
+            var verifyResult = _passwordHasher.VerifyHashedPassword(user, user.RefreshTokenHash ?? string.Empty, request.RefreshToken);
+            if (verifyResult == PasswordVerificationResult.Failed)
+            {
+                _logger.LogWarning("Invalid refresh token attempt. UserId={UserId}, Email={Email}, IP={IP}", user.UserId, user.Email, ip);
+                return Unauthorized("Invalid refresh token");
+            }
+
+            // Issue new Access Token & Rotate Refresh Token
+            var newAccessToken = GenerateAccessToken(user);
+            var newRawRefreshToken = GenerateRefreshToken();
+
+            user.RefreshTokenHash = _passwordHasher.HashPassword(user, newRawRefreshToken);
+            user.RefreshTokenExpiresAt = DateTime.UtcNow.AddDays(7);
+            user.RefreshTokenRevokedAt = null;
+
+            await _unitOfWork.CompleteAsync();
+
+            _logger.LogInformation("Refresh succeeded. UserId={UserId}, Email={Email}, IP={IP}", user.UserId, user.Email, ip);
+
+            return Ok(new TokenResponseDto
+            {
+                AccessToken = newAccessToken,
+                RefreshToken = newRawRefreshToken
+            });
+        }
+
+        // ==========================================
+        // 4. LOGOUT
+        // ==========================================
+        [HttpPost("logout")]
+        public async Task<IActionResult> Logout([FromBody] LogoutRequestDto request)
         {
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
-            // 1. Find user by Username or Email
-            var user = await _unitOfWork.Users.FirstOrDefaultAsync(u =>
-                        u.Username == dto.UsernameOrEmail ||
-                        u.Email == dto.UsernameOrEmail);
+            var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.Email == request.Email);
 
-            if (user == null || !user.IsActive)
-                return Unauthorized(new AuthResponseDto { IsSuccess = false, Message = "Invalid credentials or inactive account." });
+            if (user == null)
+                return Ok(new { Message = "Logged out successfully" }); // Do not reveal user existence
 
-            // 2. Verify Hashed Password
-            var result = _passwordHasher.VerifyHashedPassword(user, user.PasswordHash, dto.Password);
-            if (result == PasswordVerificationResult.Failed)
-                return Unauthorized(new AuthResponseDto { IsSuccess = false, Message = "Invalid credentials." });
-
-            // 3. Generate JWT Token
-            var token = GenerateJwtToken(user, out DateTime expiresOn);
-
-            return Ok(new AuthResponseDto
+            if (!string.IsNullOrEmpty(user.RefreshTokenHash))
             {
-                IsSuccess = true,
-                Message = "Logged in successfully.",
-                Token = token,
-                ExpiresOn = expiresOn,
-                Username = user.Username,
-                Role = user.Role
-            });
+                var verifyResult = _passwordHasher.VerifyHashedPassword(user, user.RefreshTokenHash, request.RefreshToken);
+                if (verifyResult == PasswordVerificationResult.Success)
+                {
+                    user.RefreshTokenRevokedAt = DateTime.UtcNow;
+                    await _unitOfWork.CompleteAsync();
+                }
+            }
+
+            return Ok(new { Message = "Logged out successfully" });
         }
 
-        private string GenerateJwtToken(User user, out DateTime expiresOn)
+        // ==========================================
+        // PRIVATE HELPERS
+        // ==========================================
+        private string GenerateAccessToken(User user)
         {
             var jwtSettings = _configuration.GetSection("Jwt");
             var key = Encoding.UTF8.GetBytes(jwtSettings["Key"] ?? "SUPER_SECRET_KEY_FOR_JWT_TRAINING_CENTER_API_2026!");
-
-            expiresOn = DateTime.Now.AddHours(2);
 
             var claims = new List<Claim>
             {
@@ -155,7 +243,7 @@ namespace TrainingCenterWebAPI.Controllers
             var tokenDescriptor = new SecurityTokenDescriptor
             {
                 Subject = new ClaimsIdentity(claims),
-                Expires = expiresOn,
+                Expires = DateTime.UtcNow.AddMinutes(15),
                 Issuer = jwtSettings["Issuer"] ?? "TrainingCenterAPI",
                 Audience = jwtSettings["Audience"] ?? "TrainingCenterClients",
                 SigningCredentials = new SigningCredentials(new SymmetricSecurityKey(key), SecurityAlgorithms.HmacSha256Signature)
@@ -165,6 +253,14 @@ namespace TrainingCenterWebAPI.Controllers
             var token = tokenHandler.CreateToken(tokenDescriptor);
 
             return tokenHandler.WriteToken(token);
+        }
+
+        private static string GenerateRefreshToken()
+        {
+            var bytes = new byte[64];
+            using var rng = RandomNumberGenerator.Create();
+            rng.GetBytes(bytes);
+            return Convert.ToBase64String(bytes);
         }
     }
 }
