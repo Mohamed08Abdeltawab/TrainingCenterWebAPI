@@ -1,7 +1,7 @@
 ﻿using AutoMapper;
 using Microsoft.AspNetCore.Authorization;
-using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using TrainingCenter.DTOs.Course;
 using TrainingCenter.Entities;
 using TrainingCenter.Interfaces;
@@ -22,6 +22,29 @@ namespace TrainingCenterWebAPI.Controllers
             _mapper = mapper;
         }
 
+        // ==========================================
+        // HELPER METHOD FOR OWNERSHIP CHECK
+        // ==========================================
+        private bool IsAuthorizedToManageCourse(Course course)
+        {
+            // Admin has full control over all courses
+            if (User.IsInRole("Admin"))
+                return true;
+
+            // Instructor can only manage courses where they are assigned as the instructor
+            if (User.IsInRole("Instructor"))
+            {
+                var claimInstructorId = User.FindFirst("InstructorId")?.Value;
+                if (int.TryParse(claimInstructorId, out int currentInstructorId))
+                {
+                    return course.InstructorId == currentInstructorId;
+                }
+            }
+
+            return false;
+        }
+
+        // 1️⃣ عرض جميع الكورسات (Admin, Instructor, Student)
         [HttpGet]
         [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetAllCourses()
@@ -32,6 +55,7 @@ namespace TrainingCenterWebAPI.Controllers
             return Ok(coursesReadDto);
         }
 
+        // 2️⃣ عرض كورس محدد بـ ID (Admin, Instructor, Student)
         [HttpGet("{id:int}")]
         [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetCourseById(int id)
@@ -45,6 +69,7 @@ namespace TrainingCenterWebAPI.Controllers
             return Ok(courseDto);
         }
 
+        // 3️⃣ إنشاء كورس جديد (Admin, Instructor)
         [HttpPost]
         [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> CreateCourse([FromBody] CourseCreateDto courseCreateDto)
@@ -54,9 +79,19 @@ namespace TrainingCenterWebAPI.Controllers
 
             var courseEntity = _mapper.Map<Course>(courseCreateDto);
 
+            // If an Instructor creates a course, force the InstructorId to be their OWN Id from Token
+            if (User.IsInRole("Instructor"))
+            {
+                var claimInstructorId = User.FindFirst("InstructorId")?.Value;
+                if (int.TryParse(claimInstructorId, out int currentInstructorId))
+                {
+                    courseEntity.InstructorId = currentInstructorId;
+                }
+            }
+
             // تعيين القيم الافتراضية
             courseEntity.Status = "Draft";
-            courseEntity.CreatedAt = DateTime.Now;
+            courseEntity.CreatedAt = DateTime.UtcNow;
             if (string.IsNullOrEmpty(courseEntity.Level))
             {
                 courseEntity.Level = "Beginner";
@@ -69,16 +104,34 @@ namespace TrainingCenterWebAPI.Controllers
             return CreatedAtAction(nameof(GetCourseById), new { id = courseReadDto.CourseId }, courseReadDto);
         }
 
+        // 4️⃣ تحديث بيانات كورس (Admin, Instructor - Owner Only)
         [HttpPut("{id:int}")]
         [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> UpdateCourse(int id, [FromBody] CourseCreateDto courseUpdateDto)
         {
+            if (!ModelState.IsValid)
+                return BadRequest(ModelState);
+
             var course = await _unitOfWork.Courses.GetByIdAsync(id);
 
             if (course == null)
                 return NotFound($"Course with ID: {id} was not found.");
 
+            // 🔐 Ownership Check
+            if (!IsAuthorizedToManageCourse(course))
+                return Forbid(); // 403 Forbidden if instructor tries to edit someone else's course
+
             _mapper.Map(courseUpdateDto, course);
+
+            // Prevent Instructor from reassigning the course to another instructor via DTO update
+            if (User.IsInRole("Instructor"))
+            {
+                var claimInstructorId = User.FindFirst("InstructorId")?.Value;
+                if (int.TryParse(claimInstructorId, out int currentInstructorId))
+                {
+                    course.InstructorId = currentInstructorId;
+                }
+            }
 
             _unitOfWork.Courses.Update(course);
             await _unitOfWork.CompleteAsync();
@@ -86,6 +139,7 @@ namespace TrainingCenterWebAPI.Controllers
             return Ok("Course updated successfully.");
         }
 
+        // 5️⃣ حذف كورس (Admin, Instructor - Owner Only)
         [HttpDelete("{id:int}")]
         [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> DeleteCourse(int id)
@@ -94,6 +148,10 @@ namespace TrainingCenterWebAPI.Controllers
 
             if (course == null)
                 return NotFound($"Course with ID: {id} was not found.");
+
+            // 🔐 Ownership Check
+            if (!IsAuthorizedToManageCourse(course))
+                return Forbid(); // 403 Forbidden if instructor tries to delete someone else's course
 
             _unitOfWork.Courses.Delete(course);
             await _unitOfWork.CompleteAsync();
