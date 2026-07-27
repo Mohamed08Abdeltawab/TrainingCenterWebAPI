@@ -1,6 +1,7 @@
 ﻿using AutoMapper;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using System.Security.Claims;
 using TrainingCenter.DTOs.Student;
 using TrainingCenter.DTOs.StudentProfile;
 using TrainingCenter.Entities;
@@ -22,21 +23,46 @@ namespace TrainingCenter.Controllers
             _mapper = mapper;
         }
 
+        // ==========================================
+        // HELPER METHOD FOR OWNERSHIP CHECK
+        // ==========================================
+        private bool IsAuthorizedStudentOrAdmin(int targetStudentId)
+        {
+            // Admins & Instructors bypass ownership check (if role permits action)
+            if (User.IsInRole("Admin") || User.IsInRole("Instructor"))
+                return true;
+
+            // If user is a Student, ensure they are requesting their OWN data
+            if (User.IsInRole("Student"))
+            {
+                var claimStudentId = User.FindFirst("StudentId")?.Value;//search in token of claims of variable "StudentId" then we return value.
+                if (int.TryParse(claimStudentId, out int currentStudentId))
+                {
+                    return currentStudentId == targetStudentId;
+                }
+            }
+
+            return false;
+        }
+
+        // 1️⃣ عرض كل الطلاب
         [HttpGet]
         [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> GetAllStudents()
         {
             var students = await _unitOfWork.Students.GetAllAsync();
-
             var studentsDto = _mapper.Map<IEnumerable<StudentReadDto>>(students);
-
             return Ok(studentsDto);
         }
 
+        // 2️⃣ عرض طالب بـ ID (مع فحص الملكية)
         [HttpGet("{id:int}")]
         [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetStudentById(int id)
         {
+            if (!IsAuthorizedStudentOrAdmin(id))
+                return Forbid(); // 403 Forbidden if student tries to access another student's data
+
             var student = await _unitOfWork.Students.GetByIdAsync(id);
 
             if (student == null)
@@ -46,6 +72,7 @@ namespace TrainingCenter.Controllers
             return Ok(studentDto);
         }
 
+        // 3️⃣ إنشاء طالب جديد (Admin Only)
         [HttpPost]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> CreateStudent([FromBody] StudentCreateDto studentCreateDto)
@@ -54,8 +81,7 @@ namespace TrainingCenter.Controllers
                 return BadRequest(ModelState);
 
             var studentEntity = _mapper.Map<Student>(studentCreateDto);
-
-            studentEntity.RegisteredAt = DateTime.Now;
+            studentEntity.RegisteredAt = DateTime.UtcNow;
             studentEntity.Status = "Active";
 
             await _unitOfWork.Students.AddAsync(studentEntity);
@@ -66,31 +92,30 @@ namespace TrainingCenter.Controllers
             return CreatedAtAction(nameof(GetStudentById), new { id = studentReadDto.StudentId }, studentReadDto);
         }
 
-        // 6️⃣ تحديث بيانات الطالب نفسه (PUT: api/Students/{id})
+        // 4️⃣ تحديث بيانات طالب (مع فحص الملكية)
         [HttpPut("{id:int}")]
         [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> UpdateStudent(int id, [FromBody] StudentCreateDto studentUpdateDto)
         {
+            if (!IsAuthorizedStudentOrAdmin(id))
+                return Forbid();
+
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
-            // 1. البحث عن الطالب في الداتا بيز
             var student = await _unitOfWork.Students.GetByIdAsync(id);
-
             if (student == null)
                 return NotFound($"Student with ID: {id} was not found.");
 
-            // 2. عمل Mapping للبيانات الجديدة فوق الكائن الموجود
             _mapper.Map(studentUpdateDto, student);
 
-            // 3. تحديث البيانات والحفظ
             _unitOfWork.Students.Update(student);
             await _unitOfWork.CompleteAsync();
 
             return Ok("Student data updated successfully.");
         }
 
-
+        // 5️⃣ حذف طالب (Admin Only)
         [HttpDelete("{id:int}")]
         [Authorize(Roles = "Admin")]
         public async Task<IActionResult> DeleteStudent(int id)
@@ -106,12 +131,18 @@ namespace TrainingCenter.Controllers
             return Ok("Student deleted successfully.");
         }
 
+        // ==========================================
+        // STUDENT PROFILE ENDPOINTS
+        // ==========================================
 
-        // 1️⃣ جلب بروفايل طالب معين (GET: api/Students/{id}/profile)
+        // 6️⃣ جلب بروفايل طالب معين (مع فحص الملكية)
         [HttpGet("{id:int}/profile")]
         [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> GetStudentProfile(int id)
         {
+            if (!IsAuthorizedStudentOrAdmin(id))
+                return Forbid();
+
             var student = await _unitOfWork.Students.GetByIdAsync(id);
             if (student == null)
                 return NotFound($"Student with ID: {id} was not found.");
@@ -127,11 +158,14 @@ namespace TrainingCenter.Controllers
             return Ok(profileReadDto);
         }
 
-        // 2️⃣ إضافة أو تحديث بروفايل الطالب (PUT: api/Students/{id}/profile)
+        // 7️⃣ إضافة أو تحديث بروفايل الطالب (مع فحص الملكية)
         [HttpPut("{id:int}/profile")]
         [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> AddOrUpdateStudentProfile(int id, [FromBody] StudentProfileCreateDto profileDto)
         {
+            if (!IsAuthorizedStudentOrAdmin(id))
+                return Forbid();
+
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
@@ -145,14 +179,12 @@ namespace TrainingCenter.Controllers
 
             if (existingProfile == null)
             {
-                // إنشاء جديد
                 var newProfile = _mapper.Map<StudentProfile>(profileDto);
                 newProfile.StudentId = id;
                 await _unitOfWork.StudentProfiles.AddAsync(newProfile);
             }
             else
             {
-                // تحديث الموجود
                 _mapper.Map(profileDto, existingProfile);
                 _unitOfWork.StudentProfiles.Update(existingProfile);
             }
@@ -161,11 +193,14 @@ namespace TrainingCenter.Controllers
             return Ok("Student profile saved successfully.");
         }
 
-        // 3️⃣ حذف بروفايل الطالب (DELETE: api/Students/{id}/profile)
+        // 8️⃣ حذف بروفايل الطالب (مع فحص الملكية)
         [HttpDelete("{id:int}/profile")]
         [Authorize(Roles = "Admin,Student")]
         public async Task<IActionResult> DeleteStudentProfile(int id)
         {
+            if (!IsAuthorizedStudentOrAdmin(id))
+                return Forbid();
+
             var profile = (await _unitOfWork.StudentProfiles
                 .FindAsync(p => p.StudentId == id))
                 .FirstOrDefault();
