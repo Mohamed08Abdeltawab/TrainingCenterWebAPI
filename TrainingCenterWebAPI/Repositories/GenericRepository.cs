@@ -35,6 +35,17 @@ namespace TrainingCenter.Repositories
         {
             await _context.Set<T>().AddAsync(entity);
         }
+
+        public async Task<bool> AnyAsync(Expression<Func<T, bool>> predicate)
+        {
+            return await _context.Set<T>().AnyAsync(predicate);
+        }
+
+        public async Task<T?> FirstOrDefaultAsync(Expression<Func<T, bool>> predicate)
+        {
+            return await _context.Set<T>().FirstOrDefaultAsync(predicate);
+        }
+
         public void Update(T entity)
         {
             _context.Set<T>().Update(entity);

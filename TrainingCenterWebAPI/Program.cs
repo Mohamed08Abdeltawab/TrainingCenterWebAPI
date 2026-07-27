@@ -1,5 +1,7 @@
+using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 using TrainingCenter.Data;
+using TrainingCenter.Entities;
 using TrainingCenter.Interfaces;
 using TrainingCenter.Repositories;
 
@@ -23,6 +25,7 @@ builder.Services.AddScoped<IUnitOfWork, UnitOfWork>();
 
 builder.Services.AddAutoMapper(cfg => cfg.AddProfile<TrainingCenter.Profiles.MappingProfile>());
 
+builder.Services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 // 4. Swagger
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();

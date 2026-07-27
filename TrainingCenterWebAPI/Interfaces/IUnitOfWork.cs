@@ -1,4 +1,5 @@
-﻿using TrainingCenter.Entities;//using entites of database
+﻿using System.Linq.Expressions;
+using TrainingCenter.Entities;//using entites of database
 
 namespace TrainingCenter.Interfaces
 {

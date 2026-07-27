@@ -21,6 +21,7 @@ namespace TrainingCenter.Data
         public virtual DbSet<Instructor> Instructors { get; set; }
         public virtual DbSet<Enrollment> Enrollments { get; set; }
         public virtual DbSet<StudentProfile> StudentProfiles { get; set; }
+        public DbSet<User> Users { get; set; }
 
         //on meodel creating 
         protected override void OnModelCreating(ModelBuilder modelBuilder)
@@ -181,6 +182,28 @@ namespace TrainingCenter.Data
                       .WithOne(p => p.StudentProfile)
                       .HasForeignKey<StudentProfile>(d => d.StudentId)
                       .HasConstraintName("FK_StudentProfiles_Students");
+            });
+
+
+            modelBuilder.Entity<User>(entity =>
+            {
+                entity.HasKey(u => u.UserId);
+
+                entity.HasIndex(u => u.Username).IsUnique();
+                entity.HasIndex(u => u.Email).IsUnique();
+
+                entity.Property(u => u.Role)
+                      .HasDefaultValue("Student");
+
+                entity.HasOne(u => u.Instructor)
+                      .WithMany()
+                      .HasForeignKey(u => u.InstructorId)
+                      .OnDelete(DeleteBehavior.SetNull);
+
+                entity.HasOne(u => u.Student)
+                      .WithMany()
+                      .HasForeignKey(u => u.StudentId)
+                      .OnDelete(DeleteBehavior.SetNull);
             });
         }
 
