@@ -9,6 +9,7 @@ namespace TrainingCenter.Interfaces
         IGenericRepository<Instructor> Instructors { get; }
         IGenericRepository<Enrollment> Enrollments { get; }
         IGenericRepository<StudentProfile> StudentProfiles { get; }
+        IGenericRepository<User> Users { get; }
 
         Task<int> CompleteAsync();//to save memory data in database
     }

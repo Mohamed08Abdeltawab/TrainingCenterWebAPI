@@ -12,6 +12,8 @@ namespace TrainingCenter.Repositories
         public IGenericRepository<Instructor> Instructors { get; private set; }
         public IGenericRepository<Enrollment> Enrollments { get; private set; }
         public IGenericRepository<StudentProfile> StudentProfiles { get; private set; }
+        public IGenericRepository<User> Users { get; private set; }
+
 
         public UnitOfWork(AppDbContext context)
         {
@@ -21,6 +23,7 @@ namespace TrainingCenter.Repositories
             Instructors = new GenericRepository<Instructor>(_context);
             Enrollments = new GenericRepository<Enrollment>(_context);
             StudentProfiles = new GenericRepository<StudentProfile>(_context);
+            Users = new GenericRepository<User>(_context);//add users
         }
 
         public async Task<int> CompleteAsync()
