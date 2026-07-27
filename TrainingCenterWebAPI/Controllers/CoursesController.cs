@@ -15,16 +15,22 @@ namespace TrainingCenterWebAPI.Controllers
     {
         private readonly IUnitOfWork _unitOfWork;
         private readonly IMapper _mapper;
+        private readonly ILogger<CoursesController> _logger;
 
-        public CoursesController(IUnitOfWork unitOfWork, IMapper mapper)
+        public CoursesController(IUnitOfWork unitOfWork, IMapper mapper, ILogger<CoursesController> logger)
         {
             _unitOfWork = unitOfWork;
             _mapper = mapper;
+            _logger = logger;
         }
 
         // ==========================================
-        // HELPER METHOD FOR OWNERSHIP CHECK
+        // PRIVATE HELPER METHODS
         // ==========================================
+        private string GetCallerIp() => HttpContext.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+
+        private string GetUserId() => User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous";
+
         private bool IsAuthorizedToManageCourse(Course course)
         {
             // Admin has full control over all courses
@@ -44,38 +50,62 @@ namespace TrainingCenterWebAPI.Controllers
             return false;
         }
 
-        // 1️⃣ عرض جميع الكورسات (Admin, Instructor, Student)
+        // ==========================================
+        // COURSE ENDPOINTS
+        // ==========================================
+
+        // 1️⃣ Get all courses (Admin, Instructor, Student)
         [HttpGet]
         [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetAllCourses()
         {
+            var userId = GetUserId();
+            var ip = GetCallerIp();
+
             var courses = await _unitOfWork.Courses.GetAllAsync();
             var coursesReadDto = _mapper.Map<IEnumerable<CourseReadDto>>(courses);
+
+            _logger.LogInformation("Retrieved all courses list. RequestedBy={UserId}, IP={IP}", userId, ip);
 
             return Ok(coursesReadDto);
         }
 
-        // 2️⃣ عرض كورس محدد بـ ID (Admin, Instructor, Student)
+        // 2️⃣ Get course by ID (Admin, Instructor, Student)
         [HttpGet("{id:int}")]
         [Authorize(Roles = "Admin,Instructor,Student")]
         public async Task<IActionResult> GetCourseById(int id)
         {
+            var userId = GetUserId();
+            var ip = GetCallerIp();
+
             var course = await _unitOfWork.Courses.GetByIdAsync(id);
 
             if (course == null)
+            {
+                _logger.LogWarning(
+                    "Course requested but not found. UserId={UserId}, TargetCourseId={TargetCourseId}, IP={IP}",
+                    userId, id, ip);
+
                 return NotFound($"Course with ID: {id} not found.");
+            }
 
             var courseDto = _mapper.Map<CourseReadDto>(course);
             return Ok(courseDto);
         }
 
-        // 3️⃣ إنشاء كورس جديد (Admin, Instructor)
+        // 3️⃣ Create a new course (Admin, Instructor)
         [HttpPost]
         [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> CreateCourse([FromBody] CourseCreateDto courseCreateDto)
         {
+            var userId = GetUserId();
+            var ip = GetCallerIp();
+
             if (!ModelState.IsValid)
+            {
+                _logger.LogWarning("Invalid model state for CreateCourse. UserId={UserId}, IP={IP}", userId, ip);
                 return BadRequest(ModelState);
+            }
 
             var courseEntity = _mapper.Map<Course>(courseCreateDto);
 
@@ -89,7 +119,7 @@ namespace TrainingCenterWebAPI.Controllers
                 }
             }
 
-            // تعيين القيم الافتراضية
+            // Set default properties
             courseEntity.Status = "Draft";
             courseEntity.CreatedAt = DateTime.UtcNow;
             if (string.IsNullOrEmpty(courseEntity.Level))
@@ -100,26 +130,48 @@ namespace TrainingCenterWebAPI.Controllers
             await _unitOfWork.Courses.AddAsync(courseEntity);
             await _unitOfWork.CompleteAsync();
 
+            _logger.LogInformation(
+                "New course created successfully. CreatedBy={UserId}, CreatedCourseId={CreatedCourseId}, InstructorId={InstructorId}, IP={IP}",
+                userId, courseEntity.CourseId, courseEntity.InstructorId, ip);
+
             var courseReadDto = _mapper.Map<CourseReadDto>(courseEntity);
             return CreatedAtAction(nameof(GetCourseById), new { id = courseReadDto.CourseId }, courseReadDto);
         }
 
-        // 4️⃣ تحديث بيانات كورس (Admin, Instructor - Owner Only)
+        // 4️⃣ Update course data (Admin, Instructor - Owner Only)
         [HttpPut("{id:int}")]
         [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> UpdateCourse(int id, [FromBody] CourseCreateDto courseUpdateDto)
         {
+            var userId = GetUserId();
+            var ip = GetCallerIp();
+
             if (!ModelState.IsValid)
+            {
+                _logger.LogWarning("Invalid model state for UpdateCourse. UserId={UserId}, TargetCourseId={TargetCourseId}, IP={IP}", userId, id, ip);
                 return BadRequest(ModelState);
+            }
 
             var course = await _unitOfWork.Courses.GetByIdAsync(id);
 
             if (course == null)
+            {
+                _logger.LogWarning(
+                    "Update failed (course not found). UserId={UserId}, TargetCourseId={TargetCourseId}, IP={IP}",
+                    userId, id, ip);
+
                 return NotFound($"Course with ID: {id} was not found.");
+            }
 
             // 🔐 Ownership Check
             if (!IsAuthorizedToManageCourse(course))
+            {
+                _logger.LogWarning(
+                    "Unauthorized attempt to update course. UserId={UserId}, TargetCourseId={TargetCourseId}, IP={IP}",
+                    userId, id, ip);
+
                 return Forbid(); // 403 Forbidden if instructor tries to edit someone else's course
+            }
 
             _mapper.Map(courseUpdateDto, course);
 
@@ -136,25 +188,48 @@ namespace TrainingCenterWebAPI.Controllers
             _unitOfWork.Courses.Update(course);
             await _unitOfWork.CompleteAsync();
 
+            _logger.LogInformation(
+                "Course updated successfully. UpdatedBy={UserId}, CourseId={CourseId}, IP={IP}",
+                userId, id, ip);
+
             return Ok("Course updated successfully.");
         }
 
-        // 5️⃣ حذف كورس (Admin, Instructor - Owner Only)
+        // 5️⃣ Delete course (Admin, Instructor - Owner Only)
         [HttpDelete("{id:int}")]
         [Authorize(Roles = "Admin,Instructor")]
         public async Task<IActionResult> DeleteCourse(int id)
         {
+            var userId = GetUserId();
+            var ip = GetCallerIp();
+
             var course = await _unitOfWork.Courses.GetByIdAsync(id);
 
             if (course == null)
+            {
+                _logger.LogWarning(
+                    "Deletion failed (course not found). UserId={UserId}, Action=DeleteCourse, TargetCourseId={TargetCourseId}, IP={IP}",
+                    userId, id, ip);
+
                 return NotFound($"Course with ID: {id} was not found.");
+            }
 
             // 🔐 Ownership Check
             if (!IsAuthorizedToManageCourse(course))
+            {
+                _logger.LogWarning(
+                    "Unauthorized attempt to delete course. UserId={UserId}, TargetCourseId={TargetCourseId}, IP={IP}",
+                    userId, id, ip);
+
                 return Forbid(); // 403 Forbidden if instructor tries to delete someone else's course
+            }
 
             _unitOfWork.Courses.Delete(course);
             await _unitOfWork.CompleteAsync();
+
+            _logger.LogInformation(
+                "Course deleted successfully. DeletedBy={UserId}, DeletedCourseId={DeletedCourseId}, IP={IP}",
+                userId, id, ip);
 
             return Ok("Course deleted successfully.");
         }

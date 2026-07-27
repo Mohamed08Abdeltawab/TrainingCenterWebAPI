@@ -94,12 +94,19 @@ namespace TrainingCenterWebAPI.Controllers
             if (!ModelState.IsValid)
                 return BadRequest(ModelState);
 
-            // Step 1: Find user by Email
-            var user = await _unitOfWork.Users.FirstOrDefaultAsync(u => u.Email == request.UsernameOrEmail);
+            // Step 1: Find user by Email OR Username in a single database query
+            var user = await _unitOfWork.Users
+                .FirstOrDefaultAsync(u => u.Email == request.UsernameOrEmail || u.Username == request.UsernameOrEmail);
 
+            // Step 2: Validate user existence and active state
             if (user == null || !user.IsActive)
             {
-                _logger.LogWarning("Failed login attempt (email not found or inactive). Email={Email}, IP={IP}", request.UsernameOrEmail, ip);
+                _logger.LogWarning(
+                    "Failed login attempt (user not found or inactive). Identifier={Identifier}, IP={IP}",
+                    request.UsernameOrEmail,
+                    ip
+                );
+
                 return Unauthorized("Invalid credentials");
             }
 
