@@ -5,21 +5,25 @@ namespace TrainingCenter.Extensions
     public static class ApplicationBuilderExtensions
     {
         // Global Security Audit & Response Status Logging Middleware
+        //can call it in program.cs like that -> app.UseSecurityAnditLogging
         public static IApplicationBuilder UseSecurityAuditLogging(this IApplicationBuilder app)
         {
+            //middleware have two parametar -> context: http reques and response, next: go to next middleware
             return app.Use(async (context, next) =>
             {
+                //don't execute code before finish the control and get response 
                 await next();
-
+                
+                //authorization
                 if (context.Response.StatusCode == StatusCodes.Status403Forbidden)
                 {
-                    var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous";
+                    var userId = context.User.FindFirstValue(ClaimTypes.NameIdentifier) ?? "anonymous";//get from claim
                     var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
                     var path = context.Request.Path.ToString();
 
-                    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();
+                    var logger = context.RequestServices.GetRequiredService<ILogger<Program>>();//not create new logger get it from system (dependency injection)
                     logger.LogWarning("Forbidden access attempt. UserId={UserId}, Path={Path}, IP={IP}", userId, path, ip);
-                }
+                }//authontication
                 else if (context.Response.StatusCode == StatusCodes.Status401Unauthorized)
                 {
                     var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
@@ -36,6 +40,7 @@ namespace TrainingCenter.Extensions
         {
             return app.Use(async (context, next) =>
             {
+                //get any execption occur
                 try
                 {
                     await next();

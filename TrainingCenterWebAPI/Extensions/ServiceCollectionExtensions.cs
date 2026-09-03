@@ -25,12 +25,14 @@ namespace TrainingCenter.Extensions
                 options.UseSqlServer(configuration.GetConnectionString("DefaultConnection")));
 
             // Core Repositories & Unit of Work
+            //addScpoed -> create one cope for http request
             services.AddScoped<IUnitOfWork, UnitOfWork>();
 
             // AutoMapper
             services.AddAutoMapper(cfg => cfg.AddProfile<Profiles.MappingProfile>());
 
             // Password Hasher Service
+            //addScpoed -> create one cope for http request
             services.AddScoped<IPasswordHasher<User>, PasswordHasher<User>>();
 
             return services;
@@ -47,11 +49,12 @@ namespace TrainingCenter.Extensions
                 throw new InvalidOperationException("JWT Secret Key is not configured.");
             }
 
+            //use bearer to detect indentity by using [Authorize]
             services.AddAuthentication(options =>
             {
                 options.DefaultAuthenticateScheme = JwtBearerDefaults.AuthenticationScheme;
                 options.DefaultChallengeScheme = JwtBearerDefaults.AuthenticationScheme;
-            })
+            })//search for token kinda bearer
             .AddJwtBearer(options =>
             {
                 options.RequireHttpsMetadata = false; // Set to true in production

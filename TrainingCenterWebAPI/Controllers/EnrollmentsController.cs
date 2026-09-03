@@ -177,7 +177,7 @@ namespace TrainingCenterWebAPI.Controllers
 
         // 4️⃣ Update enrollment data (Admin, Instructor - Owner Only)
         [HttpPut("{id:int}")]
-        [Authorize(Roles = "Admin,Instructor")]
+        [Authorize(Roles = "Admin,Instructor")]//not allowed for students..
         public async Task<IActionResult> UpdateEnrollment(int id, [FromBody] EnrollmentCreateDto enrollmentUpdateDto)
         {
             var userId = GetUserId();
